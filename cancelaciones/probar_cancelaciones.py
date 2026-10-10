@@ -1,4 +1,3 @@
-
 import os
 import sys
 
@@ -40,8 +39,8 @@ r = persistencia.recv_json()
 print("CREAR_RESERVA ->", r["status"], r["data"])
 reserva_id = r["data"]["reserva_id"]
 
-print(f"Cancelar la reserva {reserva_id} (debe mostrar OK):")
+print(f"Cancelar la reserva {reserva_id} :") # (debe mostrar OK)
 cancelar("prueba-1", reserva_id)
 
-print("Cancelar la reserva otra vez (debe mostrar que fue RECHAZADO):")
+print("Cancelar la reserva otra vez:") # (debe mostrar que fue RECHAZADO)
 cancelar("prueba-2", reserva_id)
