@@ -49,9 +49,14 @@ Cada servicio corre en su propia terminal, siempre desde la carpeta `SRB`, en es
 ```
    python rmc/servidor_rmc.py
 ```
-4. Gestor de Transacciones: `COMPLETAR (comando)`
-5. Cliente / generador de carga: `COMPLETAR (comando y parámetros)`
-
+4. Gestor de Transacciones:
+```
+   python gt/servidor_gt.py
+```
+5. Cancelaciones y Notificaciones:
+```
+   python cancelaciones/servidor_cancelaciones.py
+```
 ## Pruebas rápidas por servicio
 
 - Persistencia (con su servidor activo): `python persistencia/probar_persistencia.py`
