@@ -76,12 +76,15 @@ Con los cuatro servicios activos, en otra terminal:
 ```
 python cliente/cliente.py consulta 11
 python cliente/cliente.py reserva C1 E1 2026-11-05 2
+python cliente/cliente.py modificar C1 1 4
+python cliente/cliente.py modificar C1 1 - 2026-11-19
 python cliente/cliente.py cancelar C1 1
 ```
 
 - `consulta <mes>`: lista los eventos del mes.
 - `reserva <cliente> <evento> <fecha> <asientos>`: reserva asientos de forma síncrona.
-- `cancelar <cliente> <reserva_id>`: la cancelación es asíncrona; el sistema responde que la aceptó y después llega una notificación al cliente cuando se efectúa.
+- `modificar <cliente> <reserva_id> <nuevos_asientos|-> [nueva_fecha]`: cambia el número de asientos, la fecha o ambos (`-` = no cambiar los asientos). La fecha solo se puede cambiar a otra ocurrencia del mismo evento; si no se puede, se rechaza y la reserva queda igual.
+- `cancelar <cliente> <reserva_id> [puerto_notif] [ip_notif]`: la cancelación es asíncrona; el sistema responde que la aceptó y después llega una notificación al cliente cuando se efectúa. Por defecto la notificación llega al puerto 6001 y a la IP con la que esta máquina llega a `HOST_CANCELACIONES` (se detecta sola, sirve en el despliegue de 3 máquinas). Si no funciona, se puede indicar la IP a mano.
 
 ## Generador de carga
 
