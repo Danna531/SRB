@@ -6,7 +6,9 @@ HOST_PERSISTENCIA = "localhost"
 HOST_CANCELACIONES = "localhost"
 
 PUERTO_GT = 5550
-PUERTOS_RMC = [5555, 5556]
+PUERTOS_GT = [5550, 5551]  # principal y respaldo
+PUERTO_RMC = 5555           # RMC por defecto
+PUERTOS_RMC = [5555, 5556]  # instancias RMC (Round Robin)
 PUERTO_PERSISTENCIA = 5560
 PUERTO_CANCELACIONES = 5570
 

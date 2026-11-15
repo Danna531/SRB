@@ -11,7 +11,8 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import zmq
 import config
 
-TIMEOUT_RMC_MS = 3000  # si el RMC no responde en 5 segundos, se avisa al cliente
+# Un poco mas que el RMC a Persistencia (3 s)
+TIMEOUT_RMC_MS = 3500
 
 OPERACIONES_SINCRONAS = ["CONSULTA", "RESERVA", "MODIFICACION"]
 CAMPOS_CANCELACION = ["cliente_id", "reserva_id", "notif_addr"]
@@ -111,10 +112,13 @@ def atender(mensaje):
 
 
 def main():
+    # Puerto opcional: python3 gt/servidor_gt.py 5551 (respaldo)
+    puerto = int(sys.argv[1]) if len(sys.argv) > 1 else config.PUERTO_GT
+
     # Socket REP: aqui llegan los clientes. bind = "yo espero conexiones en este puerto".
     socket_clientes = contexto.socket(zmq.REP)
-    socket_clientes.bind("tcp://*:%d" % config.PUERTO_GT)
-    print(f"[GT] Escuchando clientes en el puerto {config.PUERTO_GT}")
+    socket_clientes.bind("tcp://*:%d" % puerto)
+    print(f"[GT] Escuchando clientes en el puerto {puerto}")
 
     try:
         while True:
