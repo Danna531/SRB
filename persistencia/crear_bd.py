@@ -39,6 +39,12 @@ def crear_bd():
         asientos INTEGER NOT NULL,
         estado TEXT NOT NULL DEFAULT 'ACTIVA'
     );
+
+    CREATE TABLE solicitudes_procesadas (
+        id TEXT PRIMARY KEY,
+        operacion TEXT NOT NULL,
+        respuesta TEXT NOT NULL
+    );
     """)
 
     for i in range(1, TOTAL_EVENTOS + 1):

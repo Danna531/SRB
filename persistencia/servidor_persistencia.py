@@ -1,6 +1,7 @@
 import os
 import sys
 import sqlite3
+import json
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import zmq
@@ -169,19 +170,62 @@ def main():
         print(f"[PERSISTENCIA] Recibí: {msg}")
 
         funcion = OPERACIONES.get(op)
+        id_solicitud = msg.get("id")
+        operaciones_mutables = {
+            "CREAR_RESERVA",
+            "MODIFICAR_RESERVA",
+            "LIBERAR_RESERVA"
+        }
+
         if funcion is None:
-            respuesta = {"status": "ERROR", "detalle": f"Operación desconocida: {op}", "data": {}}
+            respuesta = {
+                "status": "ERROR",
+                "detalle": f"Operacion desconocida: {op}",
+                "data": {}
+            }
         else:
             try:
                 cur = con.cursor()
-                respuesta = funcion(cur, msg)
-                if respuesta["status"] == "OK":
-                    con.commit()
+
+                # Revisar si esta solicitud ya fue procesada.
+                anterior = None
+                if op in operaciones_mutables and id_solicitud:
+                    anterior = cur.execute(
+                        "SELECT operacion, respuesta FROM solicitudes_procesadas WHERE id=?",
+                        (id_solicitud,)
+                    ).fetchone()
+
+                if anterior is not None:
+                    if anterior[0] != op:
+                        respuesta = {
+                            "status": "ERROR",
+                            "detalle": "Identificador utilizado para otra operacion",
+                            "data": {}
+                        }
+                    else:
+                        respuesta = json.loads(anterior[1])
+                        print(f"[PERSISTENCIA] Solicitud repetida: {id_solicitud}")
                 else:
-                    con.rollback()
+                    # Ejecutar la operacion normalmente.
+                    respuesta = funcion(cur, msg)
+
+                    if op in operaciones_mutables and id_solicitud:
+                        cur.execute(
+                            "INSERT INTO solicitudes_procesadas (id, operacion, respuesta) "
+                            "VALUES (?, ?, ?)",
+                            (id_solicitud, op, json.dumps(respuesta))
+                        )
+
+                # Guardar resultado y cambios juntos.
+                con.commit()
+
             except Exception as e:
                 con.rollback()
-                respuesta = {"status": "ERROR", "detalle": str(e), "data": {}}
+                respuesta = {
+                    "status": "ERROR",
+                    "detalle": str(e),
+                    "data": {}
+                }
 
         respuesta["id"] = msg.get("id")
         print(f"[PERSISTENCIA] Respondí: {respuesta['status']} - {respuesta['detalle']}")

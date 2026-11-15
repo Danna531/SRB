@@ -6,10 +6,9 @@ HOST_PERSISTENCIA = "localhost"
 HOST_CANCELACIONES = "localhost"
 
 PUERTO_GT = 5550
-PUERTO_RMC = 5555
+PUERTOS_RMC = [5555, 5556]
 PUERTO_PERSISTENCIA = 5560
 PUERTO_CANCELACIONES = 5570
-
 
 def addr(host, puerto):
     return f"tcp://{host}:{puerto}"

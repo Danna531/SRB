@@ -11,7 +11,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import zmq
 import config
 
-TIMEOUT_RMC_MS = 5000  # si el RMC no responde en 5 segundos, se avisa al cliente
+TIMEOUT_RMC_MS = 3000  # si el RMC no responde en 5 segundos, se avisa al cliente
 
 OPERACIONES_SINCRONAS = ["CONSULTA", "RESERVA", "MODIFICACION"]
 CAMPOS_CANCELACION = ["cliente_id", "reserva_id", "notif_addr"]
@@ -24,17 +24,25 @@ def respuesta(id_, status, detalle):
     return {"id": id_, "status": status, "detalle": detalle, "data": {}}
 
 
-def crear_socket_rmc():
-    """Crea el socket REQ conectado al RMC."""
+def crear_socket_rmc(puerto):
+    """Crea una conexion REQ a una instancia RMC."""
     s = contexto.socket(zmq.REQ)
-    s.setsockopt(zmq.RCVTIMEO, TIMEOUT_RMC_MS)  # maximo de espera al recibir
-    s.setsockopt(zmq.SNDTIMEO, TIMEOUT_RMC_MS)  # maximo de espera al enviar
-    s.setsockopt(zmq.LINGER, 0)                 # al cerrar, no esperar mensajes pendientes
-    s.connect(config.addr(config.HOST_RMC, config.PUERTO_RMC))
+    s.setsockopt(zmq.RCVTIMEO, TIMEOUT_RMC_MS)
+    s.setsockopt(zmq.SNDTIMEO, TIMEOUT_RMC_MS)
+    s.setsockopt(zmq.LINGER, 0)
+    s.connect(config.addr(config.HOST_RMC, puerto))
     return s
 
 
-socket_rmc = crear_socket_rmc()
+# Crear una conexion para cada RMC.
+sockets_rmc = [
+    crear_socket_rmc(puerto)
+    for puerto in config.PUERTOS_RMC
+]
+
+# Indica cual RMC atendera la siguiente solicitud.
+indice_rmc = 0
+
 
 # Socket PUSH hacia Cancelaciones. Si Cancelaciones no esta encendido, el mensaje
 # queda en cola y se entrega cuando el servicio arranque.
@@ -44,17 +52,44 @@ socket_cancelaciones.connect(config.addr(config.HOST_CANCELACIONES, config.PUERT
 
 
 def enviar_al_rmc(mensaje):
-    """Manda el mensaje al RMC y devuelve su respuesta."""
-    global socket_rmc
-    try:
-        socket_rmc.send_json(mensaje)
-        return socket_rmc.recv_json()
-    except zmq.Again:
-        # El RMC no contesto. Un socket REQ que no recibio respuesta queda
-        # "trabado", asi que lo cerramos y creamos uno nuevo.
-        socket_rmc.close()
-        socket_rmc = crear_socket_rmc()
-        return respuesta(mensaje.get("id"), "ERROR", "El RMC no respondio a tiempo")
+    """Round Robin con failover hacia otra instancia RMC."""
+    global indice_rmc
+
+    cantidad = len(sockets_rmc)
+
+    # Seleccionar el RMC inicial utilizando Round Robin.
+    inicial = indice_rmc % cantidad
+    indice_rmc += 1
+
+    # Intentar cada RMC disponible como maximo una vez.
+    for intento in range(cantidad):
+        indice = (inicial + intento) % cantidad
+        puerto = config.PUERTOS_RMC[indice]
+        socket_rmc = sockets_rmc[indice]
+
+        print(f"[GT] Intento {intento + 1}: {mensaje.get('op')} -> RMC {puerto}")
+
+        try:
+            socket_rmc.send_json(mensaje)
+            respuesta_rmc = socket_rmc.recv_json()
+
+            if intento > 0:
+                print(f"[GT] Recuperacion exitosa usando RMC {puerto}")
+
+            return respuesta_rmc
+
+        except zmq.Again:
+            print(f"[GT] RMC {puerto} no respondio. Intentando recuperacion...")
+
+            # Un socket REQ sin respuesta debe recrearse.
+            socket_rmc.close()
+            sockets_rmc[indice] = crear_socket_rmc(puerto)
+
+    return respuesta(
+        mensaje.get("id"),
+        "ERROR",
+        "Ningun RMC respondio a la solicitud"
+    )
 
 
 def atender(mensaje):

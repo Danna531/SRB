@@ -56,6 +56,7 @@ def reserva(m):
     return llamar_persistencia(
         {
             "op": "CREAR_RESERVA",
+            "id": m["id"],
             "cliente_id": m["cliente_id"],
             "evento_id": m["evento_id"],
             "fecha": m["fecha"],
@@ -69,6 +70,7 @@ def modificacion(m):
     return llamar_persistencia(
         {
             "op": "MODIFICAR_RESERVA",
+            "id": m["id"],
             "reserva_id": m["reserva_id"],
             "nuevos_asientos": m.get("nuevos_asientos"),
             "nueva_fecha": m.get("nueva_fecha"),
@@ -84,9 +86,11 @@ OPERACIONES = {
 
 
 def main():
+    puerto = int(sys.argv[1]) if len(sys.argv) > 1 else config.PUERTO_RMC
+
     socket = contexto.socket(zmq.REP)
-    socket.bind("tcp://*:%d" % config.PUERTO_RMC)
-    print(f"RMC escuchando en el puerto {config.PUERTO_RMC}...")
+    socket.bind("tcp://*:%d" % puerto)
+    print(f"RMC escuchando en el puerto {puerto}...")
 
     while True:
         msg = socket.recv_json()
