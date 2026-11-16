@@ -15,7 +15,7 @@ import config
 
 # El cliente espera mas que el GT (5 s) y que el RMC (3 s): asi, si algo falla
 # mas adentro, le alcanza a llegar el ERROR del GT antes de que el cliente se rinda.
-TIMEOUT_MS = 8000
+TIMEOUT_MS = 10000
 
 PUERTO_NOTIF_POR_DEFECTO = 6001
 ESPERA_NOTIFICACION_MS = 10000
@@ -28,34 +28,44 @@ class Cliente:
         # Context.instance() = un unico contexto por proceso, compartido por
         # todos los hilos del generador de carga (como un singleton en Java).
         self.contexto = zmq.Context.instance()
+        self.indice_gt = 0  # 0 = GT principal
         self.socket = self.crear_socket()
 
     def crear_socket(self):
-        """Crea el socket REQ conectado al GT, con timeouts para no quedarse esperando para siempre."""
+        """Crea el socket REQ conectado al GT actual, con timeouts."""
+        puerto = config.PUERTOS_GT[self.indice_gt]
         s = self.contexto.socket(zmq.REQ)
         s.setsockopt(zmq.RCVTIMEO, TIMEOUT_MS)  # maximo de espera al recibir
         s.setsockopt(zmq.SNDTIMEO, TIMEOUT_MS)  # maximo de espera al enviar
         s.setsockopt(zmq.LINGER, 0)             # al cerrar, descartar lo pendiente
-        s.connect(config.addr(config.HOST_GT, config.PUERTO_GT))
+        s.connect(config.addr(config.HOST_GT, puerto))
         return s
+
+    def cambiar_de_gt(self):
+        """Cierra el socket trabado y se conecta al siguiente GT."""
+        self.socket.close()
+        self.indice_gt = (self.indice_gt + 1) % len(config.PUERTOS_GT)
+        self.socket = self.crear_socket()
+        print(f"[Cliente] GT sin respuesta, probando puerto {config.PUERTOS_GT[self.indice_gt]}")
 
     def enviar(self, mensaje):
         """
-        Envia un mensaje al GT y espera la respuesta.
+        Envia un mensaje al GT; si no responde, prueba el otro GT con el mismo id.
         Devuelve (respuesta, milisegundos que tardo).
         """
-        mensaje["id"] = str(uuid.uuid4())  # identificador unico de la peticion
+        mensaje["id"] = str(uuid.uuid4())  # mismo id en los reintentos
         inicio = time.perf_counter()
-        try:
-            self.socket.send_json(mensaje)
-            resp = self.socket.recv_json()
-        except zmq.Again:
-            # El GT no respondio. Un socket REQ que no recibio respuesta queda
-            # "trabado" (no deja enviar otra cosa), asi que se cierra y se crea uno nuevo.
-            self.socket.close()
-            self.socket = self.crear_socket()
+        resp = None
+        for intento in range(len(config.PUERTOS_GT)):
+            try:
+                self.socket.send_json(mensaje)
+                resp = self.socket.recv_json()
+                break
+            except zmq.Again:
+                self.cambiar_de_gt()
+        if resp is None:
             resp = {"id": mensaje["id"], "status": "ERROR",
-                    "detalle": "El GT no respondio a tiempo", "data": {}}
+                    "detalle": "Ningun GT respondio a tiempo", "data": {}}
         milisegundos = (time.perf_counter() - inicio) * 1000
         return resp, milisegundos
 
