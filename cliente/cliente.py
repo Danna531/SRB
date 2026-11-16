@@ -15,7 +15,7 @@ import config
 
 # El cliente espera mas que el GT (5 s) y que el RMC (3 s): asi, si algo falla
 # mas adentro, le alcanza a llegar el ERROR del GT antes de que el cliente se rinda.
-TIMEOUT_MS = 8000
+TIMEOUT_MS = 10000
 
 PUERTO_NOTIF_POR_DEFECTO = 6001
 ESPERA_NOTIFICACION_MS = 10000

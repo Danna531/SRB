@@ -1,37 +1,27 @@
 import os
 import sys
+import threading
+import time
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import zmq
 import config
+from cliente_persistencia import ClientePersistencia
 
-TIMEOUT_MS = 3000  # tiempo máximo de espera a Persistencia
+SILENCIO = bool(os.environ.get("SRB_SILENCIO"))
 
-contexto = zmq.Context()
-
-
-def nuevo_socket_persistencia():
-    s = contexto.socket(zmq.REQ)
-    s.setsockopt(zmq.RCVTIMEO, TIMEOUT_MS)
-    s.setsockopt(zmq.SNDTIMEO, TIMEOUT_MS)
-    s.setsockopt(zmq.LINGER, 0)
-    s.connect(config.addr(config.HOST_PERSISTENCIA, config.PUERTO_PERSISTENCIA))
-    return s
+contexto = zmq.Context.instance()
+local = threading.local()
 
 
-sock_p = nuevo_socket_persistencia()
+def persistencia():
+    if not hasattr(local, "p"):
+        local.p = ClientePersistencia()
+    return local.p
 
 
 def llamar_persistencia(msg):
-    """Envía un mensaje a Persistencia. Si no responde a tiempo, recrea el socket."""
-    global sock_p
-    try:
-        sock_p.send_json(msg)
-        return sock_p.recv_json()
-    except zmq.Again:
-        sock_p.close()
-        sock_p = nuevo_socket_persistencia()
-        return {"status": "ERROR", "detalle": "Persistencia no responde", "data": {}}
+    return persistencia().llamar(msg)
 
 
 def consulta(m):
@@ -52,7 +42,6 @@ def reserva(m):
             "detalle": f"No hay asientos suficientes (libres: {libres})",
             "data": {},
         }
-    # 2) Confirmar la reserva en la BD
     return llamar_persistencia(
         {
             "op": "CREAR_RESERVA",
@@ -66,7 +55,6 @@ def reserva(m):
 
 
 def modificacion(m):
-    # Persistencia valida disponibilidad y aplica el cambio de forma atómica
     return llamar_persistencia(
         {
             "op": "MODIFICAR_RESERVA",
@@ -85,33 +73,55 @@ OPERACIONES = {
 }
 
 
+def procesar(msg):
+    funcion = OPERACIONES.get(msg.get("op"))
+    if funcion is None:
+        respuesta = {"status": "ERROR", "detalle": f"Operación desconocida: {msg.get('op')}", "data": {}}
+    else:
+        try:
+            respuesta = funcion(msg)
+        except KeyError as e:
+            respuesta = {"status": "ERROR", "detalle": f"Falta el campo {e}", "data": {}}
+        except Exception as e:
+            respuesta = {"status": "ERROR", "detalle": str(e), "data": {}}
+    respuesta["id"] = msg.get("id")
+    return respuesta
+
+
+def trabajador(puerto):
+    s = contexto.socket(zmq.REP)
+    s.connect("inproc://rmc-trabajadores")
+    while True:
+        try:
+            msg = s.recv_json()
+            inicio = time.perf_counter()
+            respuesta = procesar(msg)
+            if not SILENCIO:
+                print(f"[RMC {puerto}] {time.strftime('%H:%M:%S')} {msg.get('op')} id={msg.get('id')} "
+                      f"-> {respuesta['status']} - {respuesta['detalle']} "
+                      f"({(time.perf_counter() - inicio) * 1000:.1f} ms)", flush=True)
+        except Exception as e:
+            respuesta = {"status": "ERROR", "detalle": f"Mensaje invalido: {e}", "data": {}}
+        s.send_json(respuesta)
+
+
 def main():
     puerto = int(sys.argv[1]) if len(sys.argv) > 1 else config.PUERTO_RMC
+    hilos = int(sys.argv[2]) if len(sys.argv) > 2 else config.HILOS_RMC
 
-    socket = contexto.socket(zmq.REP)
-    socket.bind("tcp://*:%d" % puerto)
-    print(f"RMC escuchando en el puerto {puerto}...")
+    frontal = contexto.socket(zmq.ROUTER)
+    frontal.bind("tcp://*:%d" % puerto)
+    trasero = contexto.socket(zmq.DEALER)
+    trasero.bind("inproc://rmc-trabajadores")
+    for _ in range(hilos):
+        threading.Thread(target=trabajador, args=(puerto,), daemon=True).start()
 
-    while True:
-        msg = socket.recv_json()
-        print(f"[RMC] Recibí: {msg}")
-
-        funcion = OPERACIONES.get(msg.get("op"))
-        if funcion is None:
-            respuesta = {"status": "ERROR", "detalle": f"Operación desconocida: {msg.get('op')}", "data": {}}
-        else:
-            try:
-                respuesta = funcion(msg)
-            except KeyError as e:
-                respuesta = {"status": "ERROR", "detalle": f"Falta el campo {e}", "data": {}}
-            except Exception as e:
-                respuesta = {"status": "ERROR", "detalle": str(e), "data": {}}
-
-        respuesta["id"] = msg.get("id")
-        print(f"[RMC] Respondí: {respuesta['status']} - {respuesta['detalle']}")
-        socket.send_json(respuesta)
+    print(f"RMC escuchando en el puerto {puerto} con {hilos} hilos...", flush=True)
+    try:
+        zmq.proxy(frontal, trasero)
+    except KeyboardInterrupt:
+        print("\nRMC detenido")
 
 
 if __name__ == "__main__":
     main()
-    
