@@ -8,36 +8,16 @@ import time
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import zmq
 import config
-
-TIMEOUT_PERSISTENCIA_MS = 3000
+from cliente_persistencia import ClientePersistencia
 
 contexto = zmq.Context()
 
-
-def crear_socket_persistencia():
-    """Crea el socket REQ conectado a Persistencia."""
-    s = contexto.socket(zmq.REQ)
-    s.setsockopt(zmq.RCVTIMEO, TIMEOUT_PERSISTENCIA_MS)
-    s.setsockopt(zmq.SNDTIMEO, TIMEOUT_PERSISTENCIA_MS)
-    s.setsockopt(zmq.LINGER, 0)
-    s.connect(config.addr(config.HOST_PERSISTENCIA, config.PUERTO_PERSISTENCIA))
-    return s
-
-
-socket_persistencia = crear_socket_persistencia()
+persistencia = ClientePersistencia()
 
 
 def liberar_reserva(id_, reserva_id):
     """Pide a Persistencia liberar la reserva y devuelve su respuesta."""
-    global socket_persistencia
-    try:
-        socket_persistencia.send_json({"id": id_, "op": "LIBERAR_RESERVA", "reserva_id": reserva_id})
-        return socket_persistencia.recv_json()
-    except zmq.Again:
-        # Persistencia no contesto: se recrea el socket (un REQ sin respuesta queda trabado)
-        socket_persistencia.close()
-        socket_persistencia = crear_socket_persistencia()
-        return {"status": "ERROR", "detalle": "Persistencia no responde", "data": {}}
+    return persistencia.llamar({"id": id_, "op": "LIBERAR_RESERVA", "reserva_id": reserva_id})
 
 
 def notificar_cliente(notif_addr, notificacion):

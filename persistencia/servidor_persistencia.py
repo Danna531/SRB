@@ -1,13 +1,42 @@
+import json
 import os
-import sys
 import sqlite3
+import sys
+import threading
+import time
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import zmq
 import config
 
-RUTA_BD = os.path.join(os.path.dirname(os.path.abspath(__file__)), "srb.db")
+CARPETA = os.path.dirname(os.path.abspath(__file__))
 ANIO = 2026
+HILOS = 8
+TIMEOUT_REPLICA_MS = 1000
+TIMEOUT_PING_MS = 1000
+PERIODO_HEARTBEAT_S = 1.0
+FALLOS_PARA_PROMOVER = 3
+
+SILENCIO = bool(os.environ.get("SRB_SILENCIO"))
+
+LECTURAS = {"LISTAR_EVENTOS", "DISPONIBILIDAD"}
+ESCRITURAS = {"CREAR_RESERVA", "MODIFICAR_RESERVA", "LIBERAR_RESERVA"}
+
+contexto = zmq.Context.instance()
+
+NODO = "A"
+PEER = "B"
+RUTA_BD = ""
+
+lock_escritura = threading.RLock()
+local = threading.local()
+con_escritura = None
+estado = {"rol": "SECUNDARIO", "seq": 0, "peer_vivo": False}
+
+
+def log(texto):
+    if not SILENCIO:
+        print(f"[PERSISTENCIA-{NODO}] {time.strftime('%H:%M:%S')} {texto}", flush=True)
 
 
 def ok(detalle="", data=None):
@@ -16,6 +45,10 @@ def ok(detalle="", data=None):
 
 def rechazado(detalle):
     return {"status": "RECHAZADO", "detalle": detalle, "data": {}}
+
+
+def error(detalle):
+    return {"status": "ERROR", "detalle": detalle, "data": {}}
 
 
 def get_ocurrencia(cur, evento_id, fecha):
@@ -152,42 +185,323 @@ OPERACIONES = {
 }
 
 
+def abrir_bd(solo_lectura=False):
+    con = sqlite3.connect(RUTA_BD, check_same_thread=False, isolation_level=None, timeout=30)
+    con.execute("PRAGMA journal_mode=WAL")
+    con.execute("PRAGMA synchronous=NORMAL")
+    if solo_lectura:
+        con.execute("PRAGMA query_only=ON")
+    return con
+
+
+def con_lectura():
+    if not hasattr(local, "con"):
+        local.con = abrir_bd(solo_lectura=True)
+    return local.con
+
+
+def ejecutar_escritura(con, msg):
+    op = msg["op"]
+    id_ = msg.get("id")
+    cur = con.cursor()
+    if id_:
+        anterior = cur.execute(
+            "SELECT operacion, respuesta FROM solicitudes_procesadas WHERE id=?", (id_,)
+        ).fetchone()
+        if anterior is not None:
+            if anterior[0] != op:
+                return error("Identificador utilizado para otra operacion"), True
+            return json.loads(anterior[1]), True
+    respuesta = OPERACIONES[op](cur, msg)
+    if id_:
+        cur.execute(
+            "INSERT INTO solicitudes_procesadas (id, operacion, respuesta) VALUES (?, ?, ?)",
+            (id_, op, json.dumps(respuesta)),
+        )
+    return respuesta, False
+
+
+def direccion_repl_peer():
+    n = config.NODOS_PERSISTENCIA[PEER]
+    return config.addr(n["host"], n["puerto_repl"])
+
+
+def socket_req(direccion, timeout_ms):
+    s = contexto.socket(zmq.REQ)
+    s.setsockopt(zmq.RCVTIMEO, timeout_ms)
+    s.setsockopt(zmq.SNDTIMEO, timeout_ms)
+    s.setsockopt(zmq.LINGER, 0)
+    s.connect(direccion)
+    return s
+
+
+def ping_peer():
+    s = socket_req(direccion_repl_peer(), TIMEOUT_PING_MS)
+    try:
+        s.send_json({"tipo": "PING"})
+        return s.recv_json()
+    except zmq.ZMQError:
+        return None
+    finally:
+        s.close()
+
+
+sock_replica = None
+
+
+def enviar_replica(mensaje):
+    global sock_replica
+    if sock_replica is None:
+        sock_replica = socket_req(direccion_repl_peer(), TIMEOUT_REPLICA_MS)
+    try:
+        sock_replica.send_json(mensaje)
+        return sock_replica.recv_json()
+    except zmq.ZMQError:
+        sock_replica.close()
+        sock_replica = None
+        return None
+
+
+def replicar(con, seq, msg):
+    if not estado["peer_vivo"]:
+        return "DEGRADADO"
+    resp = enviar_replica({"tipo": "REPLICAR", "seq": seq, "op": msg})
+    if resp is None:
+        estado["peer_vivo"] = False
+        log("Secundario sin respuesta: modo degradado (se pondra al dia cuando vuelva)")
+        return "DEGRADADO"
+    if resp.get("tipo") == "RECHAZO_PRIMARIO":
+        return "ABORTAR"
+    if resp.get("tipo") == "NEED_SYNC":
+        desde = resp["ultimo"]
+        while desde < seq:
+            filas = con.execute(
+                "SELECT seq, op FROM log_ops WHERE seq>? ORDER BY seq LIMIT 200", (desde,)
+            ).fetchall()
+            if not filas:
+                break
+            r = enviar_replica({"tipo": "LOTE", "ops": [[f[0], json.loads(f[1])] for f in filas]})
+            if r is None:
+                estado["peer_vivo"] = False
+                return "DEGRADADO"
+            if r.get("tipo") == "RECHAZO_PRIMARIO":
+                return "ABORTAR"
+            desde = filas[-1][0]
+        log(f"Secundario puesto al dia hasta seq={seq}")
+    return "OK"
+
+
+def escribir_primario(msg):
+    with lock_escritura:
+        con = con_escritura
+        con.execute("BEGIN IMMEDIATE")
+        try:
+            resp, repetida = ejecutar_escritura(con, msg)
+            if repetida:
+                con.execute("ROLLBACK")
+                log(f"Solicitud repetida: {msg.get('id')}")
+                return resp
+            seq = estado["seq"] + 1
+            con.execute("INSERT INTO log_ops (seq, op) VALUES (?, ?)", (seq, json.dumps(msg)))
+            resultado = replicar(con, seq, msg)
+            if resultado == "ABORTAR":
+                con.execute("ROLLBACK")
+                estado["rol"] = "SECUNDARIO"
+                log("El otro nodo es el primario: me degrado a secundario")
+                return error("NO_PRIMARIO")
+            con.execute("COMMIT")
+            estado["seq"] = seq
+            return resp
+        except Exception:
+            con.execute("ROLLBACK")
+            raise
+
+
+def aplicar_replica(seq, msg):
+    con = con_escritura
+    con.execute("BEGIN IMMEDIATE")
+    try:
+        ejecutar_escritura(con, msg)
+        con.execute("INSERT INTO log_ops (seq, op) VALUES (?, ?)", (seq, json.dumps(msg)))
+        con.execute("COMMIT")
+        estado["seq"] = seq
+    except Exception:
+        con.execute("ROLLBACK")
+        raise
+
+
+def aplicar_lote(ops):
+    with lock_escritura:
+        if estado["rol"] == "PRIMARIO":
+            return {"tipo": "RECHAZO_PRIMARIO", "seq": estado["seq"]}
+        for seq, op in ops:
+            if seq <= estado["seq"]:
+                continue
+            if seq != estado["seq"] + 1:
+                return {"tipo": "NEED_SYNC", "ultimo": estado["seq"]}
+            aplicar_replica(seq, op)
+            log(f"Replica aplicada seq={seq} {op.get('op')} id={op.get('id')}")
+        return {"tipo": "ACK", "seq": estado["seq"]}
+
+
+def manejar_replicacion(msg):
+    tipo = msg.get("tipo")
+    if tipo == "PING":
+        return {"tipo": "PONG", "rol": estado["rol"], "seq": estado["seq"]}
+    if tipo == "REPLICAR":
+        return aplicar_lote([[msg["seq"], msg["op"]]])
+    if tipo == "LOTE":
+        return aplicar_lote(msg["ops"])
+    if tipo == "SYNC":
+        filas = con_lectura().execute(
+            "SELECT seq, op FROM log_ops WHERE seq>? ORDER BY seq LIMIT 200", (msg["desde"],)
+        ).fetchall()
+        return {"tipo": "OPS", "ops": [[f[0], json.loads(f[1])] for f in filas],
+                "rol": estado["rol"], "seq": estado["seq"]}
+    return {"tipo": "ERROR"}
+
+
+def servidor_replicacion(puerto):
+    s = contexto.socket(zmq.REP)
+    s.bind("tcp://*:%d" % puerto)
+    while True:
+        try:
+            msg = s.recv_json()
+            resp = manejar_replicacion(msg)
+        except Exception as e:
+            resp = {"tipo": "ERROR", "detalle": str(e)}
+        s.send_json(resp)
+
+
+def sincronizar_desde_peer():
+    s = socket_req(direccion_repl_peer(), 3000)
+    try:
+        while True:
+            s.send_json({"tipo": "SYNC", "desde": estado["seq"]})
+            r = s.recv_json()
+            if not r["ops"]:
+                return
+            with lock_escritura:
+                for seq, op in r["ops"]:
+                    if seq == estado["seq"] + 1:
+                        aplicar_replica(seq, op)
+            log(f"Sincronizado hasta seq={estado['seq']}")
+    except zmq.ZMQError:
+        pass
+    finally:
+        s.close()
+
+
+def promover(motivo):
+    with lock_escritura:
+        if estado["rol"] != "PRIMARIO":
+            estado["rol"] = "PRIMARIO"
+            log(f"*** PROMOVIDO A PRIMARIO ({motivo}) en seq={estado['seq']} ***")
+
+
+def heartbeat():
+    fallos = 0
+    while True:
+        time.sleep(PERIODO_HEARTBEAT_S)
+        pong = ping_peer()
+        estado["peer_vivo"] = pong is not None
+        if pong is None:
+            fallos += 1
+            if estado["rol"] == "SECUNDARIO" and fallos >= FALLOS_PARA_PROMOVER:
+                promover("el primario no responde")
+            continue
+        fallos = 0
+        if estado["rol"] == "PRIMARIO" and pong.get("rol") == "PRIMARIO":
+            if pong["seq"] > estado["seq"] or (pong["seq"] == estado["seq"] and NODO == "B"):
+                with lock_escritura:
+                    estado["rol"] = "SECUNDARIO"
+                log("Habia dos primarios: me degrado a secundario")
+        if estado["rol"] == "SECUNDARIO" and pong["seq"] > estado["seq"]:
+            sincronizar_desde_peer()
+
+
+def atender(msg):
+    op = msg.get("op")
+    if op in LECTURAS:
+        return OPERACIONES[op](con_lectura().cursor(), msg)
+    if op in ESCRITURAS:
+        if estado["rol"] != "PRIMARIO":
+            pong = ping_peer()
+            if pong is not None and pong.get("rol") == "PRIMARIO":
+                return error("NO_PRIMARIO")
+            promover("llego una escritura y el primario no responde")
+        return escribir_primario(msg)
+    if op == "ESTADO":
+        return ok("", {"nodo": NODO, "rol": estado["rol"], "seq": estado["seq"]})
+    return error(f"Operacion desconocida: {op}")
+
+
+def trabajador():
+    s = contexto.socket(zmq.REP)
+    s.connect("inproc://trabajadores")
+    while True:
+        try:
+            msg = s.recv_json()
+            inicio = time.perf_counter()
+            try:
+                resp = atender(msg)
+            except KeyError as e:
+                resp = error(f"Falta el campo {e}")
+            except Exception as e:
+                resp = error(str(e))
+            resp["id"] = msg.get("id")
+            if msg.get("op") in ESCRITURAS or msg.get("op") == "ESTADO":
+                log(f"{msg.get('op')} id={msg.get('id')} -> {resp['status']} {resp['detalle']} "
+                    f"({(time.perf_counter() - inicio) * 1000:.1f} ms)")
+        except Exception as e:
+            resp = error(f"Mensaje invalido: {e}")
+        s.send_json(resp)
+
+
 def main():
+    global NODO, PEER, RUTA_BD, con_escritura
+    NODO = sys.argv[1].upper() if len(sys.argv) > 1 else "A"
+    if NODO not in config.NODOS_PERSISTENCIA:
+        print("Uso: python persistencia/servidor_persistencia.py [A|B]")
+        return
+    PEER = "B" if NODO == "A" else "A"
+    RUTA_BD = os.path.join(CARPETA, f"srb_{NODO}.db")
     if not os.path.exists(RUTA_BD):
-        print("No existe srb.db. Ejecuta primero: python persistencia/crear_bd.py")
+        print(f"No existe {RUTA_BD}. Ejecuta primero: python persistencia/crear_bd.py")
         return
 
-    con = sqlite3.connect(RUTA_BD)
-    contexto = zmq.Context()
-    socket = contexto.socket(zmq.REP)
-    socket.bind("tcp://*:%d" % config.PUERTO_PERSISTENCIA)
-    print(f"Persistencia escuchando en el puerto {config.PUERTO_PERSISTENCIA}...")
+    con_escritura = abrir_bd()
+    estado["seq"] = con_escritura.execute("SELECT COALESCE(MAX(seq), 0) FROM log_ops").fetchone()[0]
 
-    while True:
-        msg = socket.recv_json()
-        op = msg.get("op")
-        print(f"[PERSISTENCIA] Recibí: {msg}")
+    pong = ping_peer()
+    estado["peer_vivo"] = pong is not None
+    if pong is not None and pong.get("rol") == "PRIMARIO":
+        estado["rol"] = "SECUNDARIO"
+    elif NODO == "A":
+        estado["rol"] = "PRIMARIO"
+    else:
+        estado["rol"] = "SECUNDARIO"
 
-        funcion = OPERACIONES.get(op)
-        if funcion is None:
-            respuesta = {"status": "ERROR", "detalle": f"Operación desconocida: {op}", "data": {}}
-        else:
-            try:
-                cur = con.cursor()
-                respuesta = funcion(cur, msg)
-                if respuesta["status"] == "OK":
-                    con.commit()
-                else:
-                    con.rollback()
-            except Exception as e:
-                con.rollback()
-                respuesta = {"status": "ERROR", "detalle": str(e), "data": {}}
+    puertos = config.NODOS_PERSISTENCIA[NODO]
+    threading.Thread(target=servidor_replicacion, args=(puertos["puerto_repl"],), daemon=True).start()
+    if estado["rol"] == "SECUNDARIO" and pong is not None:
+        sincronizar_desde_peer()
+    threading.Thread(target=heartbeat, daemon=True).start()
 
-        respuesta["id"] = msg.get("id")
-        print(f"[PERSISTENCIA] Respondí: {respuesta['status']} - {respuesta['detalle']}")
-        socket.send_json(respuesta)
+    frontal = contexto.socket(zmq.ROUTER)
+    frontal.bind("tcp://*:%d" % puertos["puerto"])
+    trasero = contexto.socket(zmq.DEALER)
+    trasero.bind("inproc://trabajadores")
+    for _ in range(HILOS):
+        threading.Thread(target=trabajador, daemon=True).start()
+
+    print(f"Persistencia {NODO} ({estado['rol']}, seq={estado['seq']}) atendiendo clientes en el puerto "
+          f"{puertos['puerto']} y replicacion en {puertos['puerto_repl']}...", flush=True)
+    try:
+        zmq.proxy(frontal, trasero)
+    except KeyboardInterrupt:
+        print(f"\nPersistencia {NODO} detenida")
 
 
 if __name__ == "__main__":
     main()
-    

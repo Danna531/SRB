@@ -1,7 +1,10 @@
 import os
+import shutil
 import sqlite3
 
-RUTA_BD = os.path.join(os.path.dirname(os.path.abspath(__file__)), "srb.db")
+CARPETA = os.path.dirname(os.path.abspath(__file__))
+RUTA_BD = os.path.join(CARPETA, "srb_A.db")
+RUTA_BD_B = os.path.join(CARPETA, "srb_B.db")
 
 ANIO = 2026
 MES = 11
@@ -11,8 +14,10 @@ ASIENTOS = 100
 
 
 def crear_bd():
-    if os.path.exists(RUTA_BD):
-        os.remove(RUTA_BD)
+    for viejo in (RUTA_BD, RUTA_BD + "-wal", RUTA_BD + "-shm",
+                  RUTA_BD_B, RUTA_BD_B + "-wal", RUTA_BD_B + "-shm"):
+        if os.path.exists(viejo):
+            os.remove(viejo)
 
     con = sqlite3.connect(RUTA_BD)
     cur = con.cursor()
@@ -39,6 +44,19 @@ def crear_bd():
         asientos INTEGER NOT NULL,
         estado TEXT NOT NULL DEFAULT 'ACTIVA'
     );
+
+    CREATE TABLE solicitudes_procesadas (
+        id TEXT PRIMARY KEY,
+        operacion TEXT NOT NULL,
+        respuesta TEXT NOT NULL
+    );
+
+    -- Bitacora de escrituras: el primario la usa para reenviar al secundario
+    -- y para poner al dia a un nodo que estuvo caido.
+    CREATE TABLE log_ops (
+        seq INTEGER PRIMARY KEY,
+        op TEXT NOT NULL
+    );
     """)
 
     for i in range(1, TOTAL_EVENTOS + 1):
@@ -61,9 +79,10 @@ def crear_bd():
 
     n_eventos = cur.execute("SELECT COUNT(*) FROM eventos").fetchone()[0]
     n_ocurr = cur.execute("SELECT COUNT(*) FROM ocurrencias").fetchone()[0]
-    print(f"BD creada en: {RUTA_BD}")
-    print(f"Eventos: {n_eventos} | Ocurrencias: {n_ocurr}")
     con.close()
+    shutil.copyfile(RUTA_BD, RUTA_BD_B)
+    print(f"BD creada en: {RUTA_BD} y {RUTA_BD_B}")
+    print(f"Eventos: {n_eventos} | Ocurrencias: {n_ocurr}")
 
 
 if __name__ == "__main__":
