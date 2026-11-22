@@ -25,6 +25,7 @@ class Cliente:
     """Conexion con el GT. Cada metodo envia una operacion y devuelve (respuesta, ms)."""
 
     def __init__(self):
+        """Arranca conectado al primer GT (principal)."""
         # Context.instance() = un unico contexto por proceso, compartido por
         # todos los hilos del generador de carga (como un singleton en Java).
         self.contexto = zmq.Context.instance()
@@ -158,6 +159,7 @@ def mostrar(resp, milisegundos):
 
 
 def mostrar_uso():
+    """Imprime como usar el cliente por linea de comandos."""
     print("Uso:")
     print("  python3 cliente/cliente.py consulta <mes>")
     print("  python3 cliente/cliente.py reserva <cliente_id> <evento_id> <fecha AAAA-MM-DD> <asientos>")
@@ -198,6 +200,7 @@ def ejecutar_comando(cliente, args):
 
 
 def main():
+    """Envia al GT la operacion de la linea de comandos."""
     if len(sys.argv) < 2:
         mostrar_uso()
         return

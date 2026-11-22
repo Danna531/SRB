@@ -1,6 +1,7 @@
 """
 GENERADOR DE CARGA
 Requisito según el profe en el enunciado: cada cliente debe enviar al menos 20 solicitudes por minuto.
+Uso: python3 cliente/generador_carga.py <clientes> <sol_por_minuto> <segundos> <porcentaje_consultas>
 """
 import csv
 import random
@@ -56,6 +57,7 @@ def simular_cliente(numero, ocurrencias, por_minuto, segundos, porcentaje_consul
 
 
 def mostrar_resumen(resultados, duracion_real):
+    """Promedio, desviacion y TPM por operacion."""
     print("\n===== RESUMEN =====")
     for operacion in ["CONSULTA", "RESERVA"]:
         tiempos = [fila[4] for fila in resultados if fila[2] == operacion]
@@ -72,6 +74,7 @@ def mostrar_resumen(resultados, duracion_real):
 
 
 def main():
+    """Lanza los clientes y guarda resultados_carga.csv."""
     if len(sys.argv) != 5:
         print(__doc__)
         return

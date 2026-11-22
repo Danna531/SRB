@@ -1,3 +1,7 @@
+"""
+CREAR BD
+50 eventos en noviembre (20 con dos fechas), 100 asientos cada uno. Copia A en B.
+"""
 import os
 import shutil
 import sqlite3
@@ -14,6 +18,7 @@ ASIENTOS = 100
 
 
 def crear_bd():
+    """Crea las tablas y carga los eventos."""
     for viejo in (RUTA_BD, RUTA_BD + "-wal", RUTA_BD + "-shm",
                   RUTA_BD_B, RUTA_BD_B + "-wal", RUTA_BD_B + "-shm"):
         if os.path.exists(viejo):

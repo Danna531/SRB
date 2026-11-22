@@ -1,5 +1,6 @@
 """
 SERVICIO DE CANCELACIONES Y NOTIFICACIONES
+Libera la reserva en Persistencia y notifica al cliente.
 """
 import os
 import sys
@@ -29,6 +30,7 @@ def notificar_cliente(notif_addr, notificacion):
 
 
 def procesar(mensaje):
+    """Libera la reserva y notifica al cliente."""
     id_ = mensaje.get("id")
     reserva_id = mensaje["reserva_id"]
     notif_addr = mensaje["notif_addr"]
@@ -47,6 +49,7 @@ def procesar(mensaje):
 
 
 def main():
+    """Recibe las cancelaciones del GT (PULL)."""
     # Socket PULL: aqui llegan las cancelaciones que envia el GT.
     entrada = contexto.socket(zmq.PULL)
     entrada.bind("tcp://*:%d" % config.PUERTO_CANCELACIONES)

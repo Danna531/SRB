@@ -1,5 +1,7 @@
 """
 GESTOR DE TRANSACCIONES (GT)
+Enruta consultas/reservas/modificaciones al RMC y cancelaciones a Cancelaciones.
+Uso: python3 gt/servidor_gt.py [puerto] [hilos]
 """
 import json
 import os
@@ -51,9 +53,10 @@ def crear_socket_rmc(puerto):
 
 
 def sockets_hilo():
+    """Sockets del hilo: un REQ por RMC y un PUSH a Cancelaciones."""
     if not hasattr(local, "rmc"):
         local.rmc = {puerto: crear_socket_rmc(puerto) for puerto in config.PUERTOS_RMC}
-        # queda en cola y se entrega cuando el servicio arranque.
+        # Si Cancelaciones esta caido, el mensaje queda en cola.
         local.cancelaciones = contexto.socket(zmq.PUSH)
         local.cancelaciones.setsockopt(zmq.LINGER, 0)
         local.cancelaciones.connect(config.addr(config.HOST_CANCELACIONES, config.PUERTO_CANCELACIONES))
@@ -61,6 +64,7 @@ def sockets_hilo():
 
 
 def orden_rmc():
+    """Round Robin entre RMC; los caidos van al final."""
     global indice_rmc
     puertos = config.PUERTOS_RMC
     with lock_rmc:
@@ -72,6 +76,7 @@ def orden_rmc():
 
 
 def enviar_al_rmc(mensaje):
+    """Envia al RMC; si no responde, prueba el otro con el mismo id."""
     hilo = sockets_hilo()
     for intento, puerto in enumerate(orden_rmc()):
         if not SILENCIO:
@@ -94,6 +99,7 @@ def enviar_al_rmc(mensaje):
 
 
 def registrar(op, status):
+    """Anota la transaccion para las TPM."""
     clave = f"{op}:{status}"
     ahora = time.time()
     with lock_stats:
@@ -103,6 +109,7 @@ def registrar(op, status):
 
 
 def estadisticas():
+    """TPM del ultimo minuto y totales."""
     ahora = time.time()
     with lock_stats:
         tpm = {}
@@ -136,6 +143,7 @@ def atender(mensaje):
 
 
 def trabajador(puerto):
+    """Hilo trabajador: atiende una solicitud y responde."""
     s = contexto.socket(zmq.REP)
     s.connect("inproc://gt-trabajadores")
     while True:
@@ -161,6 +169,7 @@ def trabajador(puerto):
 
 
 def reporte_tpm():
+    """Imprime las TPM cada 10 s."""
     while True:
         time.sleep(10)
         est = estadisticas()["tpm_ultimos_60s"]
@@ -170,6 +179,7 @@ def reporte_tpm():
 
 
 def main():
+    """Abre el puerto y lanza los hilos trabajadores."""
     # Puerto opcional: python3 gt/servidor_gt.py 5551 (respaldo)
     puerto = int(sys.argv[1]) if len(sys.argv) > 1 else config.PUERTO_GT
     hilos = int(sys.argv[2]) if len(sys.argv) > 2 else config.HILOS_GT
