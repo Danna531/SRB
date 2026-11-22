@@ -8,7 +8,7 @@ Uso:
 Sin el quinto argumento todos los clientes son iguales (consultas y reservas segun el porcentaje).
 Con "enunciado" cada cliente toma un perfil, como pide el enunciado:
   - 3 clientes: 2 solo consultan y 1 consulta y reserva (usa <porcentaje_consultas>).
-  - 5 u 8 clientes: la mitad (N // 2) solo consulta y el resto hace reservas y modificaciones.
+  - 5 u 8 clientes: 3 o 4 solo consultan y el resto hace reservas y modificaciones.
 """
 import csv
 import random
@@ -46,7 +46,7 @@ def asignar_perfiles(num_clientes, porcentaje_consultas, usar_enunciado):
         return [(PERFIL_MIXTO, porcentaje_consultas)] * num_clientes
     if num_clientes == 3:
         return [(PERFIL_CONSULTA, 100), (PERFIL_CONSULTA, 100), (PERFIL_CONSULTA_RESERVA, porcentaje_consultas)]
-    solo_consultan = num_clientes // 2
+    solo_consultan = (num_clientes + 1) // 2  # 5 -> 3, 8 -> 4 (como el enunciado)
     return ([(PERFIL_CONSULTA, 100)] * solo_consultan
             + [(PERFIL_RESERVA_MODIF, 0)] * (num_clientes - solo_consultan))
 
