@@ -1,3 +1,12 @@
+"""
+PERSISTENCIA
+Unico componente que toca la base de datos (SQLite, modo WAL). Hay dos nodos, A y B, con replicacion
+primario-secundario: el primario aplica cada escritura en una transaccion, la envia al secundario y
+solo entonces hace COMMIT. Si el secundario cae, el primario sigue en modo degradado; si cae el
+primario, el secundario se promueve (heartbeat o primera escritura). Cada escritura se numera en
+la tabla log_ops para poder poner al dia al nodo que vuelve. Con SRB_BASE=1 solo existe el nodo A.
+Uso: python3 persistencia/servidor_persistencia.py A|B
+"""
 import json
 import os
 import sqlite3
@@ -35,23 +44,28 @@ estado = {"rol": "SECUNDARIO", "seq": 0, "peer_vivo": False}
 
 
 def log(texto):
+    """Imprime una linea de registro con el nodo y la hora (se silencia con SRB_SILENCIO=1)."""
     if not SILENCIO:
         print(f"[PERSISTENCIA-{NODO}] {time.strftime('%H:%M:%S')} {texto}", flush=True)
 
 
 def ok(detalle="", data=None):
+    """Respuesta de exito."""
     return {"status": "OK", "detalle": detalle, "data": data or {}}
 
 
 def rechazado(detalle):
+    """Respuesta de rechazo por regla de negocio (p. ej. sin asientos)."""
     return {"status": "RECHAZADO", "detalle": detalle, "data": {}}
 
 
 def error(detalle):
+    """Respuesta de error tecnico."""
     return {"status": "ERROR", "detalle": detalle, "data": {}}
 
 
 def get_ocurrencia(cur, evento_id, fecha):
+    """Busca una ocurrencia (evento + fecha) y devuelve (id, libres, ocupados) o None."""
     return cur.execute(
         "SELECT ocurrencia_id, asientos_libres, asientos_ocupados "
         "FROM ocurrencias WHERE evento_id=? AND fecha=?",
@@ -60,6 +74,7 @@ def get_ocurrencia(cur, evento_id, fecha):
 
 
 def listar_eventos(cur, d):
+    """Lista las ocurrencias de un mes con sus asientos."""
     mes = int(d["mes"])
     patron = f"{ANIO}-{mes:02d}-%"
     filas = cur.execute(
@@ -75,6 +90,7 @@ def listar_eventos(cur, d):
 
 
 def disponibilidad(cur, d):
+    """Asientos libres y ocupados de una ocurrencia."""
     o = get_ocurrencia(cur, d["evento_id"], d["fecha"])
     if o is None:
         return rechazado("El evento o la fecha no existe")
@@ -82,6 +98,7 @@ def disponibilidad(cur, d):
 
 
 def crear_reserva(cur, d):
+    """Descuenta los asientos de la ocurrencia y registra la reserva."""
     asientos = int(d["asientos"])
     if asientos <= 0:
         return rechazado("Número de asientos inválido")
@@ -104,6 +121,7 @@ def crear_reserva(cur, d):
 
 
 def modificar_reserva(cur, d):
+    """Cambia los asientos y/o la fecha de una reserva activa, ajustando las ocurrencias."""
     r = cur.execute(
         "SELECT r.asientos, r.estado, o.evento_id, o.fecha, o.ocurrencia_id "
         "FROM reservas r JOIN ocurrencias o ON r.ocurrencia_id = o.ocurrencia_id "
@@ -160,6 +178,7 @@ def modificar_reserva(cur, d):
 
 
 def liberar_reserva(cur, d):
+    """Cancela una reserva activa y devuelve sus asientos a la ocurrencia."""
     r = cur.execute(
         "SELECT asientos, estado, ocurrencia_id FROM reservas WHERE reserva_id=?",
         (d["reserva_id"],),
@@ -186,6 +205,7 @@ OPERACIONES = {
 
 
 def abrir_bd(solo_lectura=False):
+    """Abre la BD en modo WAL; las conexiones de lectura se abren como solo lectura."""
     con = sqlite3.connect(RUTA_BD, check_same_thread=False, isolation_level=None, timeout=30)
     con.execute("PRAGMA journal_mode=WAL")
     con.execute("PRAGMA synchronous=NORMAL")
@@ -195,12 +215,14 @@ def abrir_bd(solo_lectura=False):
 
 
 def con_lectura():
+    """Conexion de solo lectura del hilo actual (una por hilo)."""
     if not hasattr(local, "con"):
         local.con = abrir_bd(solo_lectura=True)
     return local.con
 
 
 def ejecutar_escritura(con, msg):
+    """Ejecuta una escritura en la transaccion abierta. Si el id ya se proceso devuelve la respuesta guardada (idempotencia) en vez de repetirla."""
     op = msg["op"]
     id_ = msg.get("id")
     cur = con.cursor()
@@ -222,11 +244,13 @@ def ejecutar_escritura(con, msg):
 
 
 def direccion_repl_peer():
+    """Direccion del puerto de replicacion del otro nodo."""
     n = config.NODOS_PERSISTENCIA[PEER]
     return config.addr(n["host"], n["puerto_repl"])
 
 
 def socket_req(direccion, timeout_ms):
+    """Crea un REQ con limites de espera hacia una direccion."""
     s = contexto.socket(zmq.REQ)
     s.setsockopt(zmq.RCVTIMEO, timeout_ms)
     s.setsockopt(zmq.SNDTIMEO, timeout_ms)
@@ -236,6 +260,9 @@ def socket_req(direccion, timeout_ms):
 
 
 def ping_peer():
+    """Pregunta al otro nodo su rol y su seq; devuelve None si no responde o si no hay otro nodo."""
+    if PEER is None:
+        return None
     s = socket_req(direccion_repl_peer(), TIMEOUT_PING_MS)
     try:
         s.send_json({"tipo": "PING"})
@@ -250,6 +277,7 @@ sock_replica = None
 
 
 def enviar_replica(mensaje):
+    """Envia un mensaje de replicacion al secundario; devuelve None si no responde a tiempo."""
     global sock_replica
     if sock_replica is None:
         sock_replica = socket_req(direccion_repl_peer(), TIMEOUT_REPLICA_MS)
@@ -263,6 +291,7 @@ def enviar_replica(mensaje):
 
 
 def replicar(con, seq, msg):
+    """Envia la escritura al secundario (y lo pone al dia si hace falta). Devuelve OK, DEGRADADO (secundario caido) o ABORTAR (el otro nodo es el primario)."""
     if not estado["peer_vivo"]:
         return "DEGRADADO"
     resp = enviar_replica({"tipo": "REPLICAR", "seq": seq, "op": msg})
@@ -292,6 +321,7 @@ def replicar(con, seq, msg):
 
 
 def escribir_primario(msg):
+    """Escritura en el primario: transaccion, bitacora, replicacion y COMMIT, todo bajo el lock de escritura global."""
     with lock_escritura:
         con = con_escritura
         con.execute("BEGIN IMMEDIATE")
@@ -318,6 +348,7 @@ def escribir_primario(msg):
 
 
 def aplicar_replica(seq, msg):
+    """Aplica en este nodo una operacion replicada y la registra en la bitacora."""
     con = con_escritura
     con.execute("BEGIN IMMEDIATE")
     try:
@@ -331,6 +362,7 @@ def aplicar_replica(seq, msg):
 
 
 def aplicar_lote(ops):
+    """Aplica operaciones replicadas en orden; pide NEED_SYNC si falta alguna y rechaza si este nodo es el primario."""
     with lock_escritura:
         if estado["rol"] == "PRIMARIO":
             return {"tipo": "RECHAZO_PRIMARIO", "seq": estado["seq"]}
@@ -345,6 +377,7 @@ def aplicar_lote(ops):
 
 
 def manejar_replicacion(msg):
+    """Atiende los mensajes entre nodos: PING, REPLICAR, LOTE y SYNC."""
     tipo = msg.get("tipo")
     if tipo == "PING":
         return {"tipo": "PONG", "rol": estado["rol"], "seq": estado["seq"]}
@@ -362,6 +395,7 @@ def manejar_replicacion(msg):
 
 
 def servidor_replicacion(puerto):
+    """Hilo que escucha en el puerto de replicacion."""
     s = contexto.socket(zmq.REP)
     s.bind("tcp://*:%d" % puerto)
     while True:
@@ -374,6 +408,7 @@ def servidor_replicacion(puerto):
 
 
 def sincronizar_desde_peer():
+    """Pide al otro nodo las operaciones que le faltan hasta quedar al dia."""
     s = socket_req(direccion_repl_peer(), 3000)
     try:
         while True:
@@ -393,6 +428,7 @@ def sincronizar_desde_peer():
 
 
 def promover(motivo):
+    """Convierte este nodo en primario."""
     with lock_escritura:
         if estado["rol"] != "PRIMARIO":
             estado["rol"] = "PRIMARIO"
@@ -400,6 +436,7 @@ def promover(motivo):
 
 
 def heartbeat():
+    """Hilo que hace ping al otro nodo cada segundo: promueve tras varios fallos, resuelve el caso de dos primarios y sincroniza."""
     fallos = 0
     while True:
         time.sleep(PERIODO_HEARTBEAT_S)
@@ -421,6 +458,7 @@ def heartbeat():
 
 
 def atender(msg):
+    """Decide que hacer segun la operacion: lecturas locales, escrituras solo en el primario."""
     op = msg.get("op")
     if op in LECTURAS:
         return OPERACIONES[op](con_lectura().cursor(), msg)
@@ -437,6 +475,7 @@ def atender(msg):
 
 
 def trabajador():
+    """Hilo trabajador: recibe del DEALER, atiende y responde siempre."""
     s = contexto.socket(zmq.REP)
     s.connect("inproc://trabajadores")
     while True:
@@ -459,12 +498,15 @@ def trabajador():
 
 
 def main():
+    """Arranca el nodo (A o B): abre la BD, decide su rol inicial y lanza replicacion, heartbeat y los hilos trabajadores."""
     global NODO, PEER, RUTA_BD, con_escritura
     NODO = sys.argv[1].upper() if len(sys.argv) > 1 else "A"
     if NODO not in config.NODOS_PERSISTENCIA:
         print("Uso: python persistencia/servidor_persistencia.py [A|B]")
         return
     PEER = "B" if NODO == "A" else "A"
+    if PEER not in config.NODOS_PERSISTENCIA:
+        PEER = None
     RUTA_BD = os.path.join(CARPETA, f"srb_{NODO}.db")
     if not os.path.exists(RUTA_BD):
         print(f"No existe {RUTA_BD}. Ejecuta primero: python persistencia/crear_bd.py")
@@ -486,7 +528,8 @@ def main():
     threading.Thread(target=servidor_replicacion, args=(puertos["puerto_repl"],), daemon=True).start()
     if estado["rol"] == "SECUNDARIO" and pong is not None:
         sincronizar_desde_peer()
-    threading.Thread(target=heartbeat, daemon=True).start()
+    if PEER is not None:
+        threading.Thread(target=heartbeat, daemon=True).start()
 
     frontal = contexto.socket(zmq.ROUTER)
     frontal.bind("tcp://*:%d" % puertos["puerto"])

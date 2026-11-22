@@ -49,6 +49,8 @@ Los hosts se cambian en `config.py` o, sin tocar código, con variables de entor
 
 Variable `SRB_SILENCIO=1`: apaga el log por solicitud (recomendado en las pruebas de carga).
 
+Variable `SRB_BASE=1`: arquitectura base. Deja un solo GT (5550), un solo RMC (5555) y solo el nodo A de Persistencia, sin replicación. Hay que exportarla en todas las máquinas, también en la del cliente, y arrancar solo `persistencia ... A`, `rmc ... 5555` y `gt ... 5550`; así no se pagan timeouts por réplicas que no están encendidas.
+
 ## Ejecución
 
 Cada servicio corre en su propia terminal, siempre desde la carpeta raíz del proyecto. En Linux usar `python3` en lugar de `python`.
