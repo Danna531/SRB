@@ -1,3 +1,9 @@
+"""
+CLIENTE DE PERSISTENCIA
+Lo usan el RMC y Cancelaciones para hablar con los nodos A y B de Persistencia. Reparte las lecturas
+entre los nodos, manda las escrituras al primario y, si un nodo no responde o deja de ser el
+primario, prueba con el otro. El estado de salud de los nodos se comparte entre todos los hilos.
+"""
 import threading
 import time
 
@@ -15,7 +21,9 @@ _compartido = {"caido_hasta": [0.0, 0.0], "primario": 0}
 
 
 class ClientePersistencia:
+    """Conexion con los nodos de Persistencia. Cada hilo debe tener su propia instancia (sus sockets no se comparten)."""
     def __init__(self, timeout_ms=TIMEOUT_MS):
+        """Guarda las direcciones de los nodos; los sockets se crean la primera vez que se usan."""
         self.direcciones = config.direcciones_persistencia()
         self.timeout_ms = timeout_ms
         self.contexto = zmq.Context.instance()
@@ -23,6 +31,7 @@ class ClientePersistencia:
         self.turno = 0
 
     def _socket(self, i):
+        """Devuelve el socket REQ hacia el nodo i, creandolo si hace falta."""
         if self.sockets[i] is None:
             s = self.contexto.socket(zmq.REQ)
             s.setsockopt(zmq.RCVTIMEO, self.timeout_ms)
@@ -33,6 +42,7 @@ class ClientePersistencia:
         return self.sockets[i]
 
     def _llamar_nodo(self, i, mensaje):
+        """Envia el mensaje al nodo i. Si no responde a tiempo lo marca caido para todos los hilos y devuelve None."""
         s = self._socket(i)
         try:
             s.send_json(mensaje)
@@ -45,6 +55,7 @@ class ClientePersistencia:
             return None
 
     def _orden(self, es_lectura):
+        """Orden en que se prueban los nodos: lecturas por turnos y escrituras primero al primario; los caidos van al final."""
         n = len(self.direcciones)
         if es_lectura:
             self.turno += 1
@@ -59,6 +70,7 @@ class ClientePersistencia:
         return sorted(base, key=lambda i: caido[i] > ahora)
 
     def llamar(self, mensaje):
+        """Envia una operacion a Persistencia con failover entre nodos y devuelve su respuesta (o ERROR si ninguno responde)."""
         es_lectura = mensaje.get("op") in LECTURAS
         for i in self._orden(es_lectura):
             resp = self._llamar_nodo(i, mensaje)
@@ -74,6 +86,7 @@ class ClientePersistencia:
         return {"status": "ERROR", "detalle": "Persistencia no responde", "data": {}}
 
     def cerrar(self):
+        """Cierra los sockets de este cliente."""
         for i, s in enumerate(self.sockets):
             if s is not None:
                 s.close()

@@ -1,3 +1,9 @@
+"""
+RMC (Replicas de Manejo de Concurrencia)
+Recibe del GT las operaciones CONSULTA, RESERVA y MODIFICACION y las ejecuta contra Persistencia.
+Usa el patron ROUTER/DEALER con varios hilos trabajadores para atender solicitudes en paralelo.
+Uso: python3 rmc/servidor_rmc.py [puerto] [hilos]
+"""
 import os
 import sys
 import threading
@@ -15,20 +21,24 @@ local = threading.local()
 
 
 def persistencia():
+    """Cliente de Persistencia del hilo actual (se crea la primera vez)."""
     if not hasattr(local, "p"):
         local.p = ClientePersistencia()
     return local.p
 
 
 def llamar_persistencia(msg):
+    """Envia un mensaje a Persistencia y devuelve su respuesta."""
     return persistencia().llamar(msg)
 
 
 def consulta(m):
+    """CONSULTA: lista las ocurrencias de un mes con sus asientos libres y ocupados."""
     return llamar_persistencia({"op": "LISTAR_EVENTOS", "mes": m["mes"]})
 
 
 def reserva(m):
+    """RESERVA: verifica la disponibilidad en tiempo real y, si alcanza, crea la reserva."""
     # 1) Consultar disponibilidad en tiempo real
     disp = llamar_persistencia(
         {"op": "DISPONIBILIDAD", "evento_id": m["evento_id"], "fecha": m["fecha"]}
@@ -55,6 +65,7 @@ def reserva(m):
 
 
 def modificacion(m):
+    """MODIFICACION: cambia los asientos y/o la fecha de una reserva existente."""
     return llamar_persistencia(
         {
             "op": "MODIFICAR_RESERVA",
@@ -74,6 +85,7 @@ OPERACIONES = {
 
 
 def procesar(msg):
+    """Ejecuta la operacion del mensaje y siempre devuelve una respuesta con el mismo id que la solicitud."""
     funcion = OPERACIONES.get(msg.get("op"))
     if funcion is None:
         respuesta = {"status": "ERROR", "detalle": f"Operación desconocida: {msg.get('op')}", "data": {}}
@@ -89,6 +101,7 @@ def procesar(msg):
 
 
 def trabajador(puerto):
+    """Hilo trabajador: toma una peticion del DEALER, la procesa y responde. Un REP siempre debe responder lo que recibe."""
     s = contexto.socket(zmq.REP)
     s.connect("inproc://rmc-trabajadores")
     while True:
@@ -106,6 +119,7 @@ def trabajador(puerto):
 
 
 def main():
+    """Abre el puerto del RMC, lanza los hilos trabajadores y reparte el trabajo con zmq.proxy."""
     puerto = int(sys.argv[1]) if len(sys.argv) > 1 else config.PUERTO_RMC
     hilos = int(sys.argv[2]) if len(sys.argv) > 2 else config.HILOS_RMC
 
