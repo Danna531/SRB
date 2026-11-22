@@ -1,6 +1,5 @@
 """
-RMC (Replicas de Manejo de Concurrencia)
-Recibe del GT las operaciones CONSULTA, RESERVA y MODIFICACION y las ejecuta contra Persistencia.
+RMC - Recibe del GT las operaciones CONSULTA, RESERVA y MODIFICACION y las ejecuta contra Persistencia.
 Usa el patron ROUTER/DEALER con varios hilos trabajadores para atender solicitudes en paralelo.
 Uso: python3 rmc/servidor_rmc.py [puerto] [hilos]
 """
