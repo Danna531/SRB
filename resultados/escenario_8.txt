@@ -1,0 +1,17 @@
+Iniciando 8 clientes, 30 sol/min cada uno, 60 s, 50% consultas / 50% reservas
+  C1: solo_consulta
+  C2: solo_consulta
+  C3: solo_consulta
+  C4: solo_consulta
+  C5: reserva_modif
+  C6: reserva_modif
+  C7: reserva_modif
+  C8: reserva_modif
+
+===== RESUMEN =====
+CONSULTA  cantidad=120   promedio=10.0 ms  desviacion=2.9 ms
+RESERVA   cantidad=78    promedio=12.9 ms  desviacion=3.7 ms
+MODIFICACION cantidad=42    promedio=9.9 ms  desviacion=2.8 ms
+Total: 240 peticiones | rechazadas: 0 | errores: 0
+Transacciones por minuto: 239.7
+Guardado en resultados_carga.csv

@@ -1,0 +1,11 @@
+Iniciando 3 clientes, 30 sol/min cada uno, 60 s, 50% consultas / 50% reservas
+  C1: solo_consulta
+  C2: solo_consulta
+  C3: consulta_reserva
+
+===== RESUMEN =====
+CONSULTA  cantidad=78    promedio=11.1 ms  desviacion=4.8 ms
+RESERVA   cantidad=12    promedio=13.6 ms  desviacion=6.2 ms
+Total: 90 peticiones | rechazadas: 0 | errores: 0
+Transacciones por minuto: 89.9
+Guardado en resultados_carga.csv
