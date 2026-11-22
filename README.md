@@ -119,6 +119,18 @@ Ejemplo: 8 clientes, 20 solicitudes por minuto cada uno, durante 60 s, con 70 % 
 python cliente/generador_carga.py 8 20 60 70
 ```
 
+Con el quinto argumento `enunciado` cada cliente toma un perfil distinto, como pide el enunciado:
+
+```
+python cliente/generador_carga.py 3 60 60 50 enunciado
+python cliente/generador_carga.py 8 60 60 50 enunciado
+```
+
+- 3 clientes: 2 solo consultan y 1 consulta y reserva (con el porcentaje indicado).
+- 5 u 8 clientes: la mitad (`N // 2`) solo consulta y el resto hace reservas (60 %) y modificaciones (40 %, sobre reservas propias; cambian el número de asientos).
+
+El CSV incluye la columna `perfil` de cada solicitud.
+
 Al terminar muestra el tiempo promedio, la desviación estándar, los rechazos, los errores y las transacciones por minuto, y guarda cada solicitud en `resultados_carga.csv`.
 
 ## Pruebas rápidas por servicio
