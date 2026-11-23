@@ -21,7 +21,9 @@ SRB/
   gt/              Gestor de Transacciones
   cliente/         Cliente y generador de carga
   cancelaciones/   Servicio de Cancelaciones y Notificaciones
-  docs/            Informe y diagramas
+  Docs/            Informes (primera entrega y final)
+  capturas/        Capturas de las pruebas en las 3 VMs
+  resultados/      Resultados de las pruebas de rendimiento y especificaciones de las VMs
 ```
 
 ## Puertos (config.py)
