@@ -1,3 +1,7 @@
+"""
+VER BD
+Uso: python3 persistencia/ver_bd.py [A|B]
+"""
 import os
 import sqlite3
 import sys
@@ -6,6 +10,7 @@ CARPETA = os.path.dirname(os.path.abspath(__file__))
 
 
 def leer(nodo):
+    """Lee la BD del nodo (None si no existe)."""
     ruta = os.path.join(CARPETA, f"srb_{nodo}.db")
     if not os.path.exists(ruta):
         return None
@@ -24,6 +29,7 @@ def leer(nodo):
 
 
 def mostrar(nodo, d):
+    """Imprime el resumen del nodo."""
     ocupadas = [o for o in d["ocurrencias"] if o[3] > 0]
     print(f"\n===== Nodo {nodo} | operaciones replicadas: {d['seq']} =====")
     print(f"Ocurrencias: {len(d['ocurrencias'])} | con asientos ocupados: {len(ocupadas)} | "
@@ -35,6 +41,7 @@ def mostrar(nodo, d):
 
 
 def main():
+    """Muestra los nodos y si A y B son identicos."""
     nodos = [sys.argv[1].upper()] if len(sys.argv) > 1 else ["A", "B"]
     datos = {n: leer(n) for n in nodos}
     for n, d in datos.items():

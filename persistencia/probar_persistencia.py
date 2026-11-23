@@ -1,3 +1,6 @@
+"""
+PRUEBA DE PERSISTENCIA
+"""
 import os
 import sys
 
@@ -11,6 +14,7 @@ socket.connect(config.addr(config.HOST_PERSISTENCIA, config.PUERTO_PERSISTENCIA)
 
 
 def enviar(msg):
+    """Envia una operacion e imprime el resultado."""
     socket.send_json(msg)
     r = socket.recv_json()
     print(f"{msg['op']:<18} -> {r['status']} | {r['detalle']} | {r['data'] if r['data'] and msg['op'] != 'LISTAR_EVENTOS' else ''}")

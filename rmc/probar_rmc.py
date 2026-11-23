@@ -1,3 +1,6 @@
+"""
+PRUEBA DEL RMC
+"""
 import os
 import sys
 
@@ -11,6 +14,7 @@ socket.connect(config.addr(config.HOST_RMC, config.PUERTO_RMC))
 
 
 def enviar(msg):
+    """Envia una operacion e imprime el resultado."""
     socket.send_json(msg)
     r = socket.recv_json()
     extra = r["data"] if r["data"] and msg["op"] != "CONSULTA" else ""

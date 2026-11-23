@@ -1,3 +1,8 @@
+"""
+PRUEBA DE CONCURRENCIA
+Varios clientes reservan el mismo evento: no debe haber sobreventa y A y B deben quedar iguales.
+Uso: python3 pruebas/probar_concurrencia.py [clientes] [reservas_por_cliente]
+"""
 import os
 import random
 import sqlite3
@@ -12,6 +17,7 @@ EVENTO, FECHA, CAPACIDAD = "E1", "2026-11-05", 100
 
 
 def reservar(numero, cantidad, aceptadas, lock):
+    """Un cliente que reserva varias veces el mismo evento."""
     cliente = Cliente()
     for _ in range(cantidad):
         asientos = random.randint(1, 4)
@@ -23,6 +29,7 @@ def reservar(numero, cantidad, aceptadas, lock):
 
 
 def leer_bd(nombre):
+    """Lee la BD de un nodo (None si no existe)."""
     ruta = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                         "persistencia", f"srb_{nombre}.db")
     if not os.path.exists(ruta):
@@ -35,6 +42,7 @@ def leer_bd(nombre):
 
 
 def main():
+    """Lanza los clientes y verifica el resultado."""
     n_clientes = int(sys.argv[1]) if len(sys.argv) > 1 else 20
     por_cliente = int(sys.argv[2]) if len(sys.argv) > 2 else 10
 

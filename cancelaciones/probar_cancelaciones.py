@@ -1,3 +1,6 @@
+"""
+PRUEBA DE CANCELACIONES (necesita Persistencia y Cancelaciones)
+"""
 import os
 import sys
 
@@ -25,6 +28,7 @@ buzon.setsockopt(zmq.RCVTIMEO, 5000)
 
 
 def cancelar(id_, reserva_id):
+    """Envia la cancelacion y espera la notificacion."""
     hacia_cancelaciones.send_json({"id": id_, "op": "CANCELACION", "cliente_id": "C1",
                                    "reserva_id": reserva_id, "notif_addr": NOTIF_ADDR})
     try:
