@@ -1,0 +1,27 @@
+NBIG281
+CPU(s): 4
+Model name: Intel(R) Xeon(R) Gold 6348 CPU @ 2.60GHz
+ total used free shared buff/cache available
+Mem: 11Gi 3,5Gi 533Mi 92Mi 7,7Gi 7,9Gi
+Description:	Ubuntu 22.04.5 LTS
+Python 3.10.12
+pyzmq 27.2.0 libzmq 4.3.5
+
+NBIG262
+CPU(s): 4
+Model name: Intel(R) Xeon(R) Gold 6348 CPU @ 2.60GHz
+ total used free shared buff/cache available
+Mem: 11Gi 2,9Gi 1,8Gi 19Mi 6,9Gi 8,4Gi
+Description:	Ubuntu 22.04.5 LTS
+Python 3.10.12
+pyzmq 27.2.0 libzmq 4.3.5
+
+NBIG280
+CPU(s): 4
+Model name: Intel(R) Xeon(R) Gold 6348 CPU @ 2.60GHz
+ total used free shared buff/cache available
+Mem: 11Gi 3,2Gi 887Mi 46Mi 7,5Gi 8,1Gi
+Description:	Ubuntu 22.04.5 LTS
+Python 3.10.12
+pyzmq 27.2.0 libzmq 4.3.5
+
